@@ -7,6 +7,8 @@
 # Configuration (override these in .zshrc BEFORE sourcing this plugin)
 : ${PLAY_DIR:="$HOME/agy-playgrounds"}       # where playgrounds live
 : ${PLAY_OPEN_CMD:="agy --new-window"}   # command to open a playground (e.g. agy, code, cursor, zed)
+: ${PLAY_AG_WS_STORAGE:="$HOME/Library/Application Support/Antigravity/User/workspaceStorage"}
+_PLAY_PLUGIN_DIR="${0:A:h}"
 
 play() {
   local base="$PLAY_DIR"
@@ -18,7 +20,7 @@ play() {
 
 Usage:
   play [name]            Create & open a playground (default: timestamped)
-  play ls                List playgrounds with size & age
+  play ls                List playgrounds & recent Antigravity workspaces
   play rm [name]         Trash a playground (interactive picker if no name)
   play rm --all          Trash all playgrounds
   play rm --purge <name> Permanently delete (no recovery)
@@ -31,7 +33,7 @@ Options:
 Examples:
   play                   → $base/20260324-221500/
   play research          → $base/research/
-  play ls                → list all with sizes & ages
+  play ls                → list playgrounds + Antigravity workspaces
   play rm aws            → trash 'aws' (recoverable)
   play rm                → pick from list interactively
   play rm --purge aws    → permanently delete 'aws'
@@ -39,6 +41,7 @@ Examples:
 Configuration (set in .zshrc before sourcing):
   PLAY_DIR               Playground directory (default: ~/agy-playgrounds)
   PLAY_OPEN_CMD          Editor command (default: code)
+  PLAY_AG_WS_STORAGE     Antigravity workspace storage path (auto-detected)
 
 Playgrounds are stored in $base/
 Trashed items go to macOS Trash (recoverable via Finder).
@@ -72,6 +75,27 @@ EOF
     fi
   }
 
+  # relative age string from an epoch timestamp
+  local _play_age_epoch() {
+    local mod_epoch="$1" now_epoch diff
+    now_epoch=$(date +%s)
+    diff=$(( now_epoch - mod_epoch ))
+
+    if   (( diff < 60 ));    then echo "just now"
+    elif (( diff < 3600 ));  then echo "$(( diff / 60 ))m ago"
+    elif (( diff < 86400 )); then echo "$(( diff / 3600 ))h ago"
+    elif (( diff < 604800 )); then
+      local days=$(( diff / 86400 ))
+      (( days == 1 )) && echo "1 day ago" || echo "${days} days ago"
+    elif (( diff < 2592000 )); then
+      local weeks=$(( diff / 604800 ))
+      (( weeks == 1 )) && echo "1 week ago" || echo "${weeks} weeks ago"
+    else
+      local months=$(( diff / 2592000 ))
+      (( months == 1 )) && echo "1 month ago" || echo "${months} months ago"
+    fi
+  }
+
   # ── subcommands ──────────────────────────────────────────────
   case "${1:-}" in
     help|-h|--help)
@@ -79,50 +103,104 @@ EOF
       ;;
 
     ls)
-      if [[ ! -d "$base" ]] || [[ -z "$(ls -A "$base" 2>/dev/null)" ]]; then
-        echo "No playgrounds yet." >&2
-        return 0
+      local has_playgrounds=false
+
+      if [[ -d "$base" ]] && [[ -n "$(ls -A "$base" 2>/dev/null)" ]]; then
+        has_playgrounds=true
+        local total=0 total_bytes=0
+        local entries=()
+
+        for dir in "$base"/*(N-/om); do
+          local name="${dir:t}"
+          local size=$(_play_size "$dir")
+          local age=$(_play_age "$dir")
+          local bytes=$(du -sk "$dir" 2>/dev/null | cut -f1)
+          entries+=("$name|$size|$age")
+          (( total++ ))
+          (( total_bytes += bytes ))
+        done
+
+        # convert total KB to human readable
+        local total_size
+        if (( total_bytes >= 1048576 )); then
+          total_size="$(printf '%.1f GB' "$(echo "scale=1; $total_bytes / 1048576" | bc)")"
+        elif (( total_bytes >= 1024 )); then
+          total_size="$(printf '%.1f MB' "$(echo "scale=1; $total_bytes / 1024" | bc)")"
+        else
+          total_size="${total_bytes} KB"
+        fi
+
+        echo "📂 Playgrounds ($total total, $total_size)\n"
+
+        # find max name length for alignment
+        local max_name=0
+        for entry in "${entries[@]}"; do
+          local n="${entry%%|*}"
+          (( ${#n} > max_name )) && max_name=${#n}
+        done
+
+        for entry in "${entries[@]}"; do
+          local n="${entry%%|*}"
+          local rest="${entry#*|}"
+          local s="${rest%%|*}"
+          local a="${rest#*|}"
+          printf "  %-${max_name}s  %8s  %s\n" "$n" "$s" "$a"
+        done
       fi
 
-      local total=0 total_bytes=0
-      local entries=()
+      # ── Antigravity workspaces ──
+      local ag_ws="${PLAY_AG_WS_STORAGE}"
+      if [[ -d "$ag_ws" ]] && command -v python3 &>/dev/null; then
+        local ws_lines
+        ws_lines=$(PLAY_AG_WS_STORAGE="$ag_ws" PLAY_DIR="$base" \
+          python3 "${_PLAY_PLUGIN_DIR}/play_list_workspaces.py" 2>/dev/null)
 
-      for dir in "$base"/*(N-/om); do
-        local name="${dir:t}"
-        local size=$(_play_size "$dir")
-        local age=$(_play_age "$dir")
-        local bytes=$(du -sk "$dir" 2>/dev/null | cut -f1)
-        entries+=("$name|$size|$age")
-        (( total++ ))
-        (( total_bytes += bytes ))
-      done
+        if [[ -n "$ws_lines" ]]; then
+          local ws_count=0
+          local ws_entries=()
 
-      # convert total KB to human readable
-      local total_size
-      if (( total_bytes >= 1048576 )); then
-        total_size="$(printf '%.1f GB' "$(echo "scale=1; $total_bytes / 1048576" | bc)")"
-      elif (( total_bytes >= 1024 )); then
-        total_size="$(printf '%.1f MB' "$(echo "scale=1; $total_bytes / 1024" | bc)")"
-      else
-        total_size="${total_bytes} KB"
+          while IFS= read -r line; do
+            ws_entries+=("$line")
+            (( ws_count++ ))
+          done <<< "$ws_lines"
+
+          if (( ws_count > 0 )); then
+            $has_playgrounds && echo ""
+            echo "🚀 Antigravity Workspaces ($ws_count total)\n"
+
+            # find max name length for alignment
+            local max_ws_name=0
+            for entry in "${ws_entries[@]}"; do
+              local epoch="${entry%%|*}"
+              local rest="${entry#*|}"
+              local n="${rest%%|*}"
+              (( ${#n} > max_ws_name )) && max_ws_name=${#n}
+            done
+            # cap name column so paths aren't pushed too far
+            (( max_ws_name > 30 )) && max_ws_name=30
+
+            for entry in "${ws_entries[@]}"; do
+              local epoch="${entry%%|*}"
+              local rest="${entry#*|}"
+              local n="${rest%%|*}"
+              local p="${rest#*|}"
+              local age=$(_play_age_epoch "$epoch")
+              # Abbreviate path: replace $HOME with ~
+              local display_path="${p/#$HOME/~}"
+              printf "  %-${max_ws_name}s  %-40s  %s\n" "$n" "$display_path" "$age"
+            done
+          fi
+        fi
+      elif [[ ! -d "$ag_ws" ]]; then
+        : # silently skip if Antigravity not installed
+      elif ! command -v python3 &>/dev/null; then
+        $has_playgrounds && echo ""
+        echo "⚠️  python3 required for Antigravity workspace listing" >&2
       fi
 
-      echo "📂 Playgrounds ($total total, $total_size)\n"
-
-      # find max name length for alignment
-      local max_name=0
-      for entry in "${entries[@]}"; do
-        local n="${entry%%|*}"
-        (( ${#n} > max_name )) && max_name=${#n}
-      done
-
-      for entry in "${entries[@]}"; do
-        local n="${entry%%|*}"
-        local rest="${entry#*|}"
-        local s="${rest%%|*}"
-        local a="${rest#*|}"
-        printf "  %-${max_name}s  %8s  %s\n" "$n" "$s" "$a"
-      done
+      if ! $has_playgrounds && [[ -z "$ws_lines" ]]; then
+        echo "No playgrounds or workspaces found." >&2
+      fi
       ;;
 
     rm)
@@ -227,6 +305,33 @@ EOF
 
     *)
       local name="${1:-$(date +%Y%m%d-%H%M%S)}"
+
+      # Check if it matches an existing playground first
+      if [[ -d "$base/$name" ]]; then
+        ${(z)PLAY_OPEN_CMD} "$base/$name"
+        echo "🎮 Playground: $base/$name"
+        return 0
+      fi
+
+      # Check if it matches an Antigravity workspace
+      if [[ -n "$1" ]] && command -v python3 &>/dev/null && [[ -d "${PLAY_AG_WS_STORAGE}" ]]; then
+        local ws_match
+        ws_match=$(PLAY_AG_WS_STORAGE="${PLAY_AG_WS_STORAGE}" PLAY_DIR="$base" \
+          python3 "${_PLAY_PLUGIN_DIR}/play_list_workspaces.py" 2>/dev/null \
+          | while IFS='|' read -r _epoch ws_name ws_path; do
+              if [[ "$ws_name" == "$name" ]]; then
+                echo "$ws_path"
+                break
+              fi
+            done)
+        if [[ -n "$ws_match" ]]; then
+          ${(z)PLAY_OPEN_CMD} "$ws_match"
+          echo "🚀 Workspace: $ws_match"
+          return 0
+        fi
+      fi
+
+      # Otherwise create a new playground
       local dir="$base/$name"
       if ! mkdir -p "$dir" 2>/dev/null; then
         echo "❌ Failed to create $dir" >&2
@@ -241,6 +346,7 @@ EOF
 # ── tab completion ─────────────────────────────────────────────
 _play() {
   local base="${PLAY_DIR:-$HOME/agy-playgrounds}"
+  local ag_ws="${PLAY_AG_WS_STORAGE:-$HOME/Library/Application Support/Antigravity/User/workspaceStorage}"
 
   _play_dirs() {
     local dirs=()
@@ -252,14 +358,31 @@ _play() {
     compadd -a dirs
   }
 
+  _play_workspaces() {
+    if [[ -d "$ag_ws" ]] && command -v python3 &>/dev/null; then
+      local -a ws_names
+      local raw
+      raw=$(PLAY_AG_WS_STORAGE="$ag_ws" PLAY_DIR="$base" \
+        python3 "${_PLAY_PLUGIN_DIR}/play_list_workspaces.py" 2>/dev/null)
+      [[ -z "$raw" ]] && return
+      # Extract just the name field (epoch|NAME|path) from each line
+      local line
+      for line in "${(@f)raw}"; do
+        local rest="${line#*|}"
+        ws_names+=("${rest%%|*}")
+      done
+      compadd -a ws_names
+    fi
+  }
+
   local -a subcmds=(
-    'ls:List playgrounds with size \& age'
+    'ls:List playgrounds & Antigravity workspaces'
     'rm:Trash or delete a playground'
     'help:Show help'
   )
 
   if (( CURRENT == 2 )); then
-    _describe 'subcommand' subcmds || _play_dirs
+    _describe 'subcommand' subcmds || { _play_dirs; _play_workspaces }
   elif (( CURRENT == 3 )) && [[ "${words[2]}" == "rm" ]]; then
     local -a rm_flags=(
       '--all:Trash all playgrounds'
