@@ -8,7 +8,7 @@
 
 Antigravity's [Agent Manager](https://antigravity.google/product) includes a **Playground**, a scratch workspace for exploring ideas with AI agents without setting up a full project. But the Agent Manager is resource-heavy.
 
-`zsh-play` gives you the same workflow: disposable, named workspaces you can spin up and tear down, entirely from your terminal.
+`zsh-play` gives you the same workflow: disposable, named workspaces you can spin up and tear down, entirely from your terminal. It also surfaces your **Antigravity workspaces** — every project you've opened in Antigravity — so you can jump back into any of them with a single command.
 
 ## The Problem
 
@@ -42,7 +42,16 @@ play
 # 🎮 Playground: ~/agy-playgrounds/20260325-143052
 ```
 
-**2. See what you've got**
+**2. Open an existing workspace**
+
+If the name matches a project you've previously opened in Antigravity, it opens that project directly — no new playground created:
+
+```sh
+play my-api
+# 🚀 Workspace: /Users/you/dev/my-api
+```
+
+**3. See what you've got**
 
 ```sh
 play ls
@@ -51,9 +60,19 @@ play ls
 #   my-topic      12.4 MB  2 days ago
 #   quick-test       1.2 MB  5 days ago
 #   20260320-153832  3.1 MB  1 week ago
+#
+# 🚀 Antigravity Workspaces (5 total)
+#
+#   my-api           ~/dev/my-api                          10h ago
+#   blog             ~/dev/blog                            1 day ago
+#   client-site      ~/dev/freelance/client-site            3 days ago
+#   zsh-play         ~/dev/open-source/zsh-play             5 days ago
+#   dotfiles         ~/dev/dotfiles                         3 months ago
 ```
 
-**3. Clean up**
+The workspaces section shows every project you've opened in Antigravity, sorted by most recently used. Internal directories (`.gemini`, `.ssh`, etc.) are filtered out automatically.
+
+**4. Clean up**
 
 ```sh
 play rm my-topic
@@ -72,6 +91,9 @@ play rm
 #
 # Pick one to trash (or q to quit):
 ```
+
+> [!NOTE]
+> `play rm` only removes **playgrounds**. Your Antigravity workspaces (real project directories) are never modified or deleted.
 
 ## Install
 
@@ -121,19 +143,31 @@ export PLAY_OPEN_CMD="cursor"                # default: agy --new-window
 export PLAY_OPEN_CMD="code"                  # VS Code
 export PLAY_OPEN_CMD="zed"                   # Zed
 export PLAY_OPEN_CMD="agy"                   # Antigravity (reuse window)
+
+# Antigravity workspace storage path (auto-detected for macOS)
+export PLAY_AG_WS_STORAGE="$HOME/Library/Application Support/Antigravity/User/workspaceStorage"
+
+# extra directories to exclude from workspace listing (pipe-separated)
+export PLAY_AG_EXCLUDE="$HOME/scratch|$HOME/tmp"
 ```
 
 ## All Commands
 
 | Command | Description |
 |---|---|
-| `play [name]` | Create & open a playground (timestamped if no name) |
-| `play ls` | List playgrounds with size & age |
+| `play [name]` | Create & open a playground, or open a matching workspace |
+| `play ls` | List playgrounds and Antigravity workspaces |
 | `play rm [name]` | Trash a playground (interactive picker if no name) |
 | `play rm --all` | Trash all playgrounds |
 | `play rm --purge <name>` | Permanently delete, no recovery |
 | `play rm -f <name>` | Skip confirmation prompt |
 | `play help` | Show help |
+
+### How `play [name]` resolves
+
+1. **Existing playground?** → opens it
+2. **Antigravity workspace match?** → opens the project directory
+3. **Neither?** → creates a new playground
 
 ## How Deletion Works
 
@@ -143,18 +177,23 @@ Use `--purge` for permanent deletion (`rm -rf`). **This is irreversible.**
 
 Combine flags as needed: `play rm --purge -f old-project`
 
+> [!IMPORTANT]
+> `play rm` only affects playgrounds in `$PLAY_DIR`. Workspaces are read-only — they are listed but never modified or deleted by this plugin.
+
 ## Tab Completion
 
 `play` includes smart completions out of the box:
 
-- **Subcommands**: `play <TAB>` → `ls`, `rm`, `help`, and playground names
+- **Subcommands**: `play <TAB>` → `ls`, `rm`, `help`, playground names, and workspace names
 - **rm flags**: `play rm <TAB>` → `--all`, `--purge`, `-f`, `--force`, and playground names
 - **Playground names**: available anywhere a name is expected
+- **Workspace names**: available when selecting a target to open
 
 ## Requirements
 
 - **zsh** (macOS default shell)
 - **macOS** (uses `/usr/bin/trash` for safe deletion)
+- **python3** (optional, required for Antigravity workspace listing)
 
 ## License
 
