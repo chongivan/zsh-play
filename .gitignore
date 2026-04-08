@@ -1,0 +1,47 @@
+# macOS
+.DS_Store
+.localized
+__MACOSX/
+._*
+.AppleDouble
+.LSOverride
+Icon[^M]
+
+# Python byte-compiled / optimized
+__pycache__/
+*.py[codz]
+*$py.class
+
+# Python environments
+.env
+.envrc
+.venv
+env/
+venv/
+
+# Distribution / packaging
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors & IDEs
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# Secrets & credentials (safety net)
+*.pem
+*.key
+*.p12
+*.pfx
+*.credentials
+*.secret
